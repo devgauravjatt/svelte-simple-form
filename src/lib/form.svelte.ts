@@ -2,6 +2,9 @@ import { tick, untrack } from 'svelte';
 import { z } from 'zod';
 import { checkPath, getByPath, getChangedPaths, setByPath } from './helper.js';
 import { zodValidator } from './validation/zod.js';
+import { applyAction, enhance } from '$app/forms';
+import { goto } from '$app/navigation';
+import type { ActionResult } from '@sveltejs/kit';
 
 type Primitive = string | number | boolean | null | undefined;
 
@@ -144,6 +147,45 @@ export default function useForm<T>({
 			node.addEventListener('submit', (event) => {
 				event.preventDefault();
 				form.submit();
+			});
+		},
+		actionHandler: (node: HTMLFormElement) => {
+			return enhance(node, async ({ cancel }: { cancel: () => void }) => {
+				form.setIsSubmitting(true);
+				await form.validate();
+				if (!form.isValid) {
+					form.setIsSubmitting(false);
+					cancel();
+				}
+				return async ({ result }: { result: ActionResult }) => {
+					form.setIsSubmitting(false);
+
+					// @ts-ignore
+					if (result?.data?.form_option?.reset) {
+						form.reset();
+					}
+					// @ts-ignore
+					if (result?.data?.form_option?.errors) {
+						// @ts-ignore
+						const errors = result?.data?.form_option?.errors as {
+							path: Path<T>;
+							error: string;
+						}[];
+
+						errors.forEach((err) => {
+							if (checkPath(form.data, err.path)) {
+								form.setError(err.path, err.error);
+								return;
+							}
+						});
+					}
+
+					if (result.type === 'redirect') {
+						goto(result.location);
+					} else {
+						await applyAction(result);
+					}
+				};
 			});
 		}
 	});
